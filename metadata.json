@@ -1,0 +1,6 @@
+{
+  "name": "PWA Web Shell",
+  "description": "An Android WebView-based PWA shell with customizable URL settings, integrated offline caching, and a pull-to-refresh layout.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

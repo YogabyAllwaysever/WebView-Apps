@@ -71,6 +71,10 @@ import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
 import kotlinx.coroutines.launch
+import android.os.Message
+import android.content.ClipData
+import android.content.ClipboardManager
+import androidx.compose.material.icons.filled.Laptop
 
 // Model data representing a popular PWA preset
 data class PwaPreset(
@@ -132,6 +136,53 @@ fun isNetworkAvailable(context: Context): Boolean {
     }
 }
 
+// Translate raw input/query into fully qualified search or loading URL
+fun resolveInputUrl(input: String): String {
+    val clean = input.trim()
+    if (clean.isEmpty()) return "https://google.com"
+    
+    // Check if it's a search query (no dots, or contains spaces)
+    if (!clean.contains(".") || clean.contains(" ")) {
+        val query = Uri.encode(clean)
+        return "https://www.google.com/search?q=$query"
+    }
+    
+    if (clean.startsWith("http://") || clean.startsWith("https://")) {
+        return clean
+    }
+    return "https://$clean"
+}
+
+// Determine if a URL belongs to common OAuth, login, sign-in, or authentication pages that should be rendered inline.
+fun isAuthOrIdentityUrl(url: String): Boolean {
+    val lower = url.lowercase()
+    return lower.contains("accounts.google.com") ||
+           lower.contains("appleid.apple.com") ||
+           lower.contains("facebook.com/dialog/oauth") ||
+           lower.contains("facebook.com/v") ||
+           lower.contains("api.twitter.com/oauth") ||
+           lower.contains("github.com/login") ||
+           lower.contains("github.com/join") ||
+           lower.contains("github.com/oauth") ||
+           lower.contains("auth0.com") ||
+           lower.contains("okta.com") ||
+           lower.contains("microsoftonline.com") ||
+           lower.contains("firebaseapp.com/__/auth") ||
+           lower.contains("supabase.co") ||
+           lower.contains("supabase.com") ||
+           lower.contains("cognito") ||
+           lower.contains("keycloak") ||
+           lower.contains("clerk.com") ||
+           lower.contains("auth.") ||
+           lower.contains("login.") ||
+           lower.contains("/oauth") ||
+           lower.contains("/auth/") ||
+           lower.contains("/login") ||
+           lower.contains("/signin") ||
+           lower.contains("/signup") ||
+           lower.contains("/api/auth")
+}
+
 // Pin PWA Shortcut onto the Home Screen
 fun createPwaShortcut(context: Context, name: String, url: String) {
     if (name.trim().isEmpty() || url.trim().isEmpty()) {
@@ -191,6 +242,12 @@ fun MainAppScreen(initialUrlIntent: String? = null) {
     var pullToRefreshEnabled by remember {
         mutableStateOf(sharedPref.getBoolean("pull_to_refresh_enabled", true))
     }
+    var isBrowserMode by remember {
+        mutableStateOf(sharedPref.getBoolean("is_browser_mode", true))
+    }
+    var isDesktopMode by remember {
+        mutableStateOf(sharedPref.getBoolean("is_desktop_mode", false))
+    }
 
     // If an incoming intent brought a specific URL, priority load it directly
     val activeUrlToLoad = remember(initialUrlIntent, savedUrl) {
@@ -201,9 +258,28 @@ fun MainAppScreen(initialUrlIntent: String? = null) {
         }
     }
 
+    var addressBarInput by remember { mutableStateOf(activeUrlToLoad) }
+
     // Webster Runtime states
     var webViewInstance by remember { mutableStateOf<WebView?>(null) }
     var currentLoadedUrl by remember { mutableStateOf(activeUrlToLoad) }
+
+    // Sync input box when loaded url loads successfully or changes
+    LaunchedEffect(currentLoadedUrl) {
+        addressBarInput = currentLoadedUrl
+    }
+
+    // Dynamic desktop site configuration handler
+    LaunchedEffect(isDesktopMode) {
+        webViewInstance?.let { wv ->
+            wv.settings.userAgentString = if (isDesktopMode) {
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            } else {
+                "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+            }
+            wv.reload()
+        }
+    }
     var isLoading by remember { mutableStateOf(false) }
     var loadProgress by remember { mutableIntStateOf(0) }
     var isOfflineState by remember { mutableStateOf(false) }
@@ -551,6 +627,54 @@ fun MainAppScreen(initialUrlIntent: String? = null) {
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Mode Browser Lite", fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                Text("Tampilkan bilah alamat & kontrol navigasi Chrome Lite", fontSize = 11.sp, color = Color.Gray)
+                            }
+                            Switch(
+                                checked = isBrowserMode,
+                                onCheckedChange = {
+                                    isBrowserMode = it
+                                    sharedPref.edit().putBoolean("is_browser_mode", it).apply()
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color(0xFF03DAC6),
+                                    checkedTrackColor = Color(0xFF03DAC6).copy(alpha = 0.5f)
+                                )
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Mode Situs Desktop", fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                Text("Muat situs web versi komputer/desktop", fontSize = 11.sp, color = Color.Gray)
+                            }
+                            Switch(
+                                checked = isDesktopMode,
+                                onCheckedChange = {
+                                    isDesktopMode = it
+                                    sharedPref.edit().putBoolean("is_desktop_mode", it).apply()
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color(0xFFBB86FC),
+                                    checkedTrackColor = Color(0xFFBB86FC).copy(alpha = 0.5f)
+                                )
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
                             Column {
                                 Text("Pull-to-Reload Geser", fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.Bold)
                                 Text("Geser ke bawah untuk muat ulang", fontSize = 11.sp, color = Color.Gray)
@@ -589,7 +713,7 @@ fun MainAppScreen(initialUrlIntent: String? = null) {
                             }
                         }
 
-                        Divider(color = Color(0xFF2C2C2C))
+                        HorizontalDivider(color = Color(0xFF2C2C2C))
 
                         // Wipe / Reset everything button
                         Button(
@@ -622,188 +746,266 @@ fun MainAppScreen(initialUrlIntent: String? = null) {
             label = "physicsPullBounceY"
         )
 
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color(0xFF121212))
-                .pointerInput(isWebViewAtTop, pullToRefreshEnabled) {
-                    if (!pullToRefreshEnabled || !isWebViewAtTop) return@pointerInput
-                    detectVerticalDragGestures(
-                        onDragStart = {},
-                        onDragEnd = {
-                            if (pullDeltaY >= pullTriggerThreshold) {
-                                isRefreshingState = true
-                                webViewInstance?.reload()
-                            }
-                            pullDeltaY = 0f
-                        },
-                        onDragCancel = {
-                            pullDeltaY = 0f
-                        },
-                        onVerticalDrag = { change, dragAmount ->
-                            if (dragAmount > 0 || pullDeltaY > 0) {
-                                val frictionResult = pullDeltaY + dragAmount * 0.42f
-                                pullDeltaY = frictionResult.coerceIn(0f, pullMaxThreshold)
-                                change.consume()
-                            }
-                        }
-                    )
-                }
         ) {
-            // Android Native Webview Frame Wrapper (Standalone, pure immersion)
-            AndroidView(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .offset(y = (animatedPullOffset / 2.6f).dp)
-                    .testTag("pwa_webview"),
-                factory = { ctx ->
-                    WebView(ctx).apply {
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-
-                        // Optimize settings for native shell operations
-                        settings.apply {
-                            javaScriptEnabled = true
-                            domStorageEnabled = true
-                            databaseEnabled = true
-                            allowFileAccess = true
-                            allowContentAccess = true
-                            loadWithOverviewMode = true
-                            useWideViewPort = true
-                            builtInZoomControls = true
-                            displayZoomControls = false
-                            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                            setSupportZoom(true)
-
-                            // Cache routing setup
-                            val activeHasInternet = isNetworkAvailable(ctx)
-                            cacheMode = when (cacheModeOption) {
-                                "OFFLINE_FIRST" -> if (activeHasInternet) WebSettings.LOAD_DEFAULT else WebSettings.LOAD_CACHE_ELSE_NETWORK
-                                "NETWORK_ONLY" -> WebSettings.LOAD_NO_CACHE
-                                else -> if (activeHasInternet) WebSettings.LOAD_DEFAULT else WebSettings.LOAD_CACHE_ELSE_NETWORK
-                            }
+            if (isBrowserMode) {
+                BrowserTopBar(
+                    currentUrl = currentLoadedUrl,
+                    addressInput = addressBarInput,
+                    onAddressInputChange = { newValue: String -> addressBarInput = newValue },
+                    onNavigate = { inputUrl: String ->
+                        val targetUrl = resolveInputUrl(inputUrl)
+                        webViewInstance?.loadUrl(targetUrl)
+                    },
+                    canGoBack = canGoBack,
+                    onBack = {
+                        webViewInstance?.let { if (it.canGoBack()) it.goBack() }
+                    },
+                    canGoForward = canGoForward,
+                    onForward = {
+                        webViewInstance?.let { if (it.canGoForward()) it.goForward() }
+                    },
+                    isLoading = isLoading,
+                    onRefreshOrStop = {
+                        webViewInstance?.let {
+                            if (isLoading) it.stopLoading() else it.reload()
                         }
-
-                        setOnScrollChangeListener { _, _, scrollY, _, _ ->
-                            isWebViewAtTop = (scrollY == 0)
-                        }
-
-                        webViewClient = object : WebViewClient() {
-                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                                isLoading = true
-                                isOfflineState = false
-                                if (!url.isNullOrEmpty()) {
-                                    currentLoadedUrl = url
-                                }
-                            }
-
-                            override fun onPageFinished(view: WebView?, url: String?) {
-                                isLoading = false
-                                isRefreshingState = false
-                                if (!url.isNullOrEmpty()) {
-                                    currentLoadedUrl = url
-                                    canGoBack = canGoBack()
-                                    canGoForward = canGoForward()
-                                }
-                                isWebViewAtTop = (view?.scrollY == 0)
-                            }
-
-                            override fun onReceivedError(
-                                view: WebView?,
-                                request: WebResourceRequest?,
-                                error: WebResourceError?
-                            ) {
-                                if (request?.isForMainFrame == true) {
-                                    isOfflineState = true
-                                    isLoading = false
-                                    isRefreshingState = false
-                                }
-                            }
-
-                            // Block external redirections leaking scope
-                            override fun shouldOverrideUrlLoading(
-                                view: WebView?,
-                                request: WebResourceRequest?
-                            ): Boolean {
-                                val destination = request?.url?.toString() ?: return false
-                                val targetDomain = request.url?.host ?: ""
-                                val baseDomain = try { Uri.parse(savedUrl).host } catch (e: Exception) { null }
-
-                                if (baseDomain != null && targetDomain.isNotEmpty() && !targetDomain.contains(baseDomain) &&
-                                    !destination.startsWith("mailto:") && !destination.startsWith("tel:")) {
-                                    try {
-                                        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(destination)))
-                                        return true
-                                    } catch (e: Exception) {
-                                        // Ignore
-                                    }
-                                }
-                                return false
-                            }
-                        }
-
-                        webChromeClient = object : WebChromeClient() {
-                            override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                                loadProgress = newProgress
-                            }
-
-                            override fun onGeolocationPermissionsShowPrompt(
-                                origin: String?,
-                                callback: GeolocationPermissions.Callback?
-                            ) {
-                                callback?.invoke(origin, true, false)
-                            }
-
-                            override fun onShowFileChooser(
-                                webView: WebView?,
-                                filePathCallback: ValueCallback<Array<Uri>>?,
-                                fileChooserParams: FileChooserParams?
-                            ): Boolean {
-                                uploadMessageCallback?.onReceiveValue(null)
-                                uploadMessageCallback = filePathCallback
-
-                                val selectIntent = fileChooserParams?.createIntent()
-                                if (selectIntent != null) {
-                                    try {
-                                        fileChooserLauncher.launch(selectIntent)
-                                    } catch (e: Exception) {
-                                        uploadMessageCallback?.onReceiveValue(null)
-                                        uploadMessageCallback = null
-                                        return false
-                                    }
-                                }
-                                return true
-                            }
-                        }
-
-                        webViewInstance = this
-                        loadUrl(activeUrlToLoad)
+                    },
+                    isDesktopMode = isDesktopMode,
+                    onToggleDesktop = {
+                        isDesktopMode = !isDesktopMode
+                        sharedPref.edit().putBoolean("is_desktop_mode", isDesktopMode).apply()
+                    },
+                    onOpenMenu = {
+                        scope.launch { drawerState.open() }
                     }
-                },
-                update = { wv ->
-                    val internetOk = isNetworkAvailable(context)
-                    wv.settings.cacheMode = when (cacheModeOption) {
-                        "OFFLINE_FIRST" -> if (internetOk) WebSettings.LOAD_DEFAULT else WebSettings.LOAD_CACHE_ELSE_NETWORK
-                        "NETWORK_ONLY" -> WebSettings.LOAD_NO_CACHE
-                        else -> if (internetOk) WebSettings.LOAD_DEFAULT else WebSettings.LOAD_CACHE_ELSE_NETWORK
-                    }
-                }
-            )
-
-            // Dynamic progress loader bar on standard top edge
-            if (isLoading && !isRefreshingState) {
-                LinearProgressIndicator(
-                    progress = { loadProgress / 100f },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .height(3.dp),
-                    color = Color(0xFF03DAC6),
-                    trackColor = Color(0xFF03DAC6).copy(alpha = 0.2f)
                 )
             }
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .pointerInput(isWebViewAtTop, pullToRefreshEnabled) {
+                        if (!pullToRefreshEnabled || !isWebViewAtTop) return@pointerInput
+                        detectVerticalDragGestures(
+                            onDragStart = {},
+                            onDragEnd = {
+                                if (pullDeltaY >= pullTriggerThreshold) {
+                                    isRefreshingState = true
+                                    webViewInstance?.reload()
+                                }
+                                pullDeltaY = 0f
+                            },
+                            onDragCancel = {
+                                pullDeltaY = 0f
+                            },
+                            onVerticalDrag = { change, dragAmount ->
+                                if (dragAmount > 0 || pullDeltaY > 0) {
+                                    val frictionResult = pullDeltaY + dragAmount * 0.42f
+                                    pullDeltaY = frictionResult.coerceIn(0f, pullMaxThreshold)
+                                    change.consume()
+                                }
+                            }
+                        )
+                    }
+            ) {
+                // Android Native Webview Frame Wrapper (Standalone, pure immersion)
+                AndroidView(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .offset(y = (animatedPullOffset / 2.6f).dp)
+                        .testTag("pwa_webview"),
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT
+                            )
+
+                            // Optimize settings for native shell operations
+                            settings.apply {
+                                javaScriptEnabled = true
+                                domStorageEnabled = true
+                                databaseEnabled = true
+                                allowFileAccess = true
+                                allowContentAccess = true
+                                loadWithOverviewMode = true
+                                useWideViewPort = true
+                                builtInZoomControls = true
+                                displayZoomControls = false
+                                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                                setSupportZoom(true)
+                                setSupportMultipleWindows(true)
+                                setJavaScriptCanOpenWindowsAutomatically(true)
+
+                                userAgentString = if (isDesktopMode) {
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                                } else {
+                                    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+                                }
+
+                                // Cache routing setup
+                                val activeHasInternet = isNetworkAvailable(ctx)
+                                cacheMode = when (cacheModeOption) {
+                                    "OFFLINE_FIRST" -> if (activeHasInternet) WebSettings.LOAD_DEFAULT else WebSettings.LOAD_CACHE_ELSE_NETWORK
+                                    "NETWORK_ONLY" -> WebSettings.LOAD_NO_CACHE
+                                    else -> if (activeHasInternet) WebSettings.LOAD_DEFAULT else WebSettings.LOAD_CACHE_ELSE_NETWORK
+                                }
+                            }
+
+                            setOnScrollChangeListener { _, _, scrollY, _, _ ->
+                                isWebViewAtTop = (scrollY == 0)
+                            }
+
+                            webViewClient = object : WebViewClient() {
+                                override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                    isLoading = true
+                                    isOfflineState = false
+                                    if (!url.isNullOrEmpty()) {
+                                        currentLoadedUrl = url
+                                    }
+                                }
+
+                                override fun onPageFinished(view: WebView?, url: String?) {
+                                    isLoading = false
+                                    isRefreshingState = false
+                                    if (!url.isNullOrEmpty()) {
+                                        currentLoadedUrl = url
+                                        canGoBack = canGoBack()
+                                        canGoForward = canGoForward()
+                                    }
+                                    isWebViewAtTop = (view?.scrollY == 0)
+                                }
+
+                                override fun onReceivedError(
+                                    view: WebView?,
+                                    request: WebResourceRequest?,
+                                    error: WebResourceError?
+                                ) {
+                                    if (request?.isForMainFrame == true) {
+                                        isOfflineState = true
+                                        isLoading = false
+                                        isRefreshingState = false
+                                    }
+                                }
+
+                                // Block external redirections leaking scope or redirect to actual browser
+                                override fun shouldOverrideUrlLoading(
+                                    view: WebView?,
+                                    request: WebResourceRequest?
+                                ): Boolean {
+                                    val destination = request?.url?.toString() ?: return false
+                                    val targetDomain = request.url?.host ?: ""
+                                    val baseDomain = try { Uri.parse(savedUrl).host } catch (e: Exception) { null }
+
+                                    // In Chrome Lite Browser mode, allow user to browse any page inline in Android!
+                                    if (isBrowserMode) {
+                                        if (destination.startsWith("mailto:") || destination.startsWith("tel:")) {
+                                            try {
+                                                ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(destination)))
+                                                return true
+                                            } catch (e: Exception) {
+                                                // Ignore
+                                            }
+                                        }
+                                        return false
+                                    }
+
+                                    // Standalone mode intercepts external domains unless they are common OAuth/auth flows
+                                    val isAuth = isAuthOrIdentityUrl(destination)
+                                    if (!isAuth && baseDomain != null && targetDomain.isNotEmpty() && !targetDomain.contains(baseDomain) &&
+                                        !destination.startsWith("mailto:") && !destination.startsWith("tel:")) {
+                                        try {
+                                            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(destination)))
+                                            return true
+                                        } catch (e: Exception) {
+                                            // Ignore
+                                        }
+                                    }
+                                    return false
+                                }
+                            }
+
+                            webChromeClient = object : WebChromeClient() {
+                                override fun onCreateWindow(
+                                    view: WebView?,
+                                    isDialog: Boolean,
+                                    isUserGesture: Boolean,
+                                    resultMsg: Message?
+                                ): Boolean {
+                                    val transport = resultMsg?.obj as? WebView.WebViewTransport
+                                    if (transport != null) {
+                                        // Force opening target="_blank" popups inside the current/main WebView
+                                        transport.webView = view
+                                        resultMsg.sendToTarget()
+                                        return true
+                                    }
+                                    return false
+                                }
+
+                                override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                                    loadProgress = newProgress
+                                }
+
+                                override fun onGeolocationPermissionsShowPrompt(
+                                    origin: String?,
+                                    callback: GeolocationPermissions.Callback?
+                                ) {
+                                    callback?.invoke(origin, true, false)
+                                }
+
+                                override fun onShowFileChooser(
+                                    webView: WebView?,
+                                    filePathCallback: ValueCallback<Array<Uri>>?,
+                                    fileChooserParams: FileChooserParams?
+                                ): Boolean {
+                                    uploadMessageCallback?.onReceiveValue(null)
+                                    uploadMessageCallback = filePathCallback
+
+                                    val selectIntent = fileChooserParams?.createIntent()
+                                    if (selectIntent != null) {
+                                        try {
+                                            fileChooserLauncher.launch(selectIntent)
+                                        } catch (e: Exception) {
+                                            uploadMessageCallback?.onReceiveValue(null)
+                                            uploadMessageCallback = null
+                                            return false
+                                        }
+                                    }
+                                    return true
+                                }
+                            }
+
+                            webViewInstance = this
+                            loadUrl(activeUrlToLoad)
+                        }
+                    },
+                    update = { wv ->
+                        val internetOk = isNetworkAvailable(context)
+                        wv.settings.cacheMode = when (cacheModeOption) {
+                            "OFFLINE_FIRST" -> if (internetOk) WebSettings.LOAD_DEFAULT else WebSettings.LOAD_CACHE_ELSE_NETWORK
+                            "NETWORK_ONLY" -> WebSettings.LOAD_NO_CACHE
+                            else -> if (internetOk) WebSettings.LOAD_DEFAULT else WebSettings.LOAD_CACHE_ELSE_NETWORK
+                        }
+                    }
+                )
+
+                // Dynamic progress loader bar on standard top edge
+                if (isLoading && !isRefreshingState) {
+                    LinearProgressIndicator(
+                        progress = { loadProgress / 100f },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.TopCenter)
+                            .height(3.dp),
+                        color = Color(0xFF03DAC6),
+                        trackColor = Color(0xFF03DAC6).copy(alpha = 0.2f)
+                    )
+                }
 
             // Swipe right reminder guide tab on left edge (subtle interactive hint handle)
             Box(
@@ -856,11 +1058,7 @@ fun MainAppScreen(initialUrlIntent: String? = null) {
             }
 
             // Indonesian design offline state fallback screen
-            AnimatedVisibility(
-                visible = isOfflineState,
-                enter = fadeIn(),
-                exit = fadeOut()
-            ) {
+            if (isOfflineState) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -953,6 +1151,208 @@ fun MainAppScreen(initialUrlIntent: String? = null) {
                     }
                 }
             }
+        }
+    }
+}
+}
+
+@Composable
+fun BrowserTopBar(
+    currentUrl: String,
+    addressInput: String,
+    onAddressInputChange: (String) -> Unit,
+    onNavigate: (String) -> Unit,
+    canGoBack: Boolean,
+    onBack: () -> Unit,
+    canGoForward: Boolean,
+    onForward: () -> Unit,
+    isLoading: Boolean,
+    onRefreshOrStop: () -> Unit,
+    isDesktopMode: Boolean,
+    onToggleDesktop: () -> Unit,
+    onOpenMenu: () -> Unit
+) {
+    val context = LocalContext.current
+    Surface(
+        color = Color(0xFF1E1E1E),
+        tonalElevation = 4.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                // Back Button
+                IconButton(
+                    onClick = onBack,
+                    enabled = canGoBack,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Kembali",
+                        tint = if (canGoBack) Color.White else Color.Gray,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                // Forward Button
+                IconButton(
+                    onClick = onForward,
+                    enabled = canGoForward,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Maju",
+                        tint = if (canGoForward) Color.White else Color.Gray,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                // Address Omnibox with Lock Icon & Input Field
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color(0xFF121212))
+                        .border(1.dp, Color(0xFF2C2C2C), RoundedCornerShape(20.dp))
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val isHttps = currentUrl.startsWith("https://")
+                    Icon(
+                        imageVector = if (isHttps) Icons.Default.Lock else Icons.Default.LockOpen,
+                        contentDescription = if (isHttps) "Koneksi Aman" else "Koneksi Tidak Aman",
+                        tint = if (isHttps) Color(0xFF03DAC6) else Color(0xFFCF6679),
+                        modifier = Modifier
+                            .size(14.dp)
+                            .clickable {
+                                Toast
+                                    .makeText(
+                                        context,
+                                        if (isHttps) "Situs terenkripsi dengan aman (HTTPS)" else "Lalu lintas data tidak dienkripsi (HTTP)",
+                                        Toast.LENGTH_SHORT
+                                    )
+                                    .show()
+                            }
+                    )
+
+                    Spacer(modifier = Modifier.width(6.dp))
+
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = addressInput,
+                        onValueChange = onAddressInputChange,
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            imeAction = androidx.compose.ui.text.input.ImeAction.Search
+                        ),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                            onSearch = {
+                                onNavigate(addressInput)
+                            }
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(vertical = 4.dp),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(Color(0xFF03DAC6)),
+                        decorationBox = { innerTextField ->
+                            if (addressInput.isEmpty()) {
+                                Text(
+                                    text = "Telusuri atau ketik URL...",
+                                    color = Color.Gray,
+                                    fontSize = 13.sp
+                                )
+                            }
+                            innerTextField()
+                        }
+                    )
+
+                    if (addressInput.isNotEmpty()) {
+                        IconButton(
+                            onClick = { onAddressInputChange("") },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Clear,
+                                contentDescription = "Bersihkan",
+                                tint = Color.Gray,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Copy active link
+                IconButton(
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = ClipData.newPlainText("URL", currentUrl)
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(context, "Link berhasil disalin ke papan klip!", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ContentCopy,
+                        contentDescription = "Salin Url",
+                        tint = Color.LightGray,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                // Desktop site toggle indicator
+                IconButton(
+                    onClick = onToggleDesktop,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Laptop,
+                        contentDescription = "Desktop Site Mode",
+                        tint = if (isDesktopMode) Color(0xFFBB86FC) else Color.LightGray,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                // Refresh / Stop Action
+                IconButton(
+                    onClick = onRefreshOrStop,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isLoading) Icons.Default.Close else Icons.Default.Refresh,
+                        contentDescription = if (isLoading) "Batal" else "Muat Ulang",
+                        tint = if (isLoading) Color(0xFFCF6679) else Color(0xFF03DAC6),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                // Open menu / drawer
+                IconButton(
+                    onClick = onOpenMenu,
+                    modifier = Modifier.size(31.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Menu,
+                        contentDescription = "Menu Pengaturan",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+            HorizontalDivider(color = Color(0xFF2C2C2C), thickness = 1.dp)
         }
     }
 }
